@@ -1,0 +1,6186 @@
+(module
+    (func $print (import "imports" "print") (param i32))
+    (func $gc (import "imports" "gc") (param i32))
+    (import "js" "mem" (memory 1))
+    (type $basicFunc (func))
+    (data (i32.const 4) "print")
+(data (i32.const 16) "_G")
+(data (i32.const 24) "A")
+(data (i32.const 32) "B")
+(data (i32.const 40) "C")
+(data (i32.const 48) "D")
+(data (i32.const 56) "E")
+(data (i32.const 64) "F")
+(data (i32.const 72) "blue")
+(data (i32.const 84) "test")
+(data (i32.const 96) "key")
+(data (i32.const 104) "Hello")
+(data (i32.const 116) "a")
+(data (i32.const 124) "b")
+(data (i32.const 132) "c")
+(data (i32.const 140) "bla")
+(data (i32.const 148) "world")
+
+    (global $HP (export "HP") (mut i32) (i32.const 156))
+    (global $FP (export "FP") (mut i32) (i32.const 156))
+    (global $SP (export "SP") (mut i32) (i32.const 65528))
+    (global $temp (mut i32) (i32.const 0))
+    (func $equals (param $lhs i32) (param $rhs i32) (result i32)
+    (local $lhsStringPtr i32) (local $rhsStringPtr i32) (local $i i32)
+
+      ;; If the types are different, return false
+      (i32.ne
+        (i32.load (local.get $lhs))
+        (i32.load (local.get $rhs))
+      )
+      (if (then (return (i32.const 0))))
+      ;; If the types not a string, just compare the pointer/int/bool/nil value
+      (i32.ne
+        (i32.load (local.get $lhs))
+        (i32.const 4)
+      )
+      (if (then (return
+        (i32.eq
+          (i32.load (i32.add (i32.const 4) (local.get $lhs)))
+          (i32.load (i32.add (i32.const 4) (local.get $rhs)))
+        )
+      )))
+      ;; Otherwise, must compare strings
+      (local.set $lhsStringPtr (i32.load (i32.add (i32.const 4) (local.get $lhs))))
+      (local.set $rhsStringPtr (i32.load (i32.add (i32.const 4) (local.get $rhs))))
+      ;; If the strings are of different length, return false
+      (i32.ne (i32.load (local.get $lhsStringPtr)) (i32.load (local.get $rhsStringPtr)))
+      (if (then
+        (return (i32.const 0))
+      ))
+
+      (local.set $i (i32.const 4))
+      ;; Must compare each of the lengths
+      (loop
+        (i32.ne
+          (i32.load
+            (i32.add
+              (local.get $lhsStringPtr)
+              (local.get $i)
+            )
+          )
+          (i32.load
+            (i32.add
+              (local.get $rhsStringPtr)
+              (local.get $i)
+            )
+          )
+        )
+        ;; If the characters aren't the same return 0
+        (if (then (return (i32.const 0))))
+        ;; Increment i
+        (local.set $i (i32.add (local.get $i) (i32.const 4)))
+        ;; Loop if i less than string length
+        (br_if
+          0
+          (i32.lt_s
+            (i32.sub (local.get $i) (i32.const 4))
+            (i32.load (local.get $lhsStringPtr))
+          )
+        )
+      )
+
+      (return (i32.const 1))
+    )
+    (func $nearestPrime (param $n i32) (result i32)
+      (local $cd i32)
+      (loop $notPrime
+        ;; Increment n by 1
+        (local.set $n (i32.add (local.get $n) (i32.const 1)))
+        ;; Reset candidate divisor
+        (local.set $cd (i32.const 1))
+        (block $foundPrime
+          (loop $nextCd
+            (local.set $cd (i32.add (local.get $cd) (i32.const 1)))
+            ;; If our candidate divisor divides evenly into n, then n is composite
+            (i32.rem_s (local.get $n) (local.get $cd))
+            i32.const 0
+            i32.eq
+            ;; So go to the next n
+            br_if $notPrime
+
+            ;; If candidate divisor is n-1, we've checked all possible divisors, we're good
+            (i32.eq (local.get $cd) (i32.sub (local.get $n) (i32.const 1)))
+            br_if $foundPrime
+            ;; Otherwise, look at next candidate divisor
+            br $nextCd
+          )
+        )
+        (return (local.get $n))
+      )
+      ;; Cannot get here
+      unreachable
+    )
+    (func $hashInsert (param $tablePtr i32) (param $keyPtr i32) (param $valuePtr i32)
+      (local $kvpPtr i32)
+      (local $numElementsPtr i32)
+      (local $capacityPtr i32)
+
+      (local.set $numElementsPtr (i32.load (i32.add (local.get $tablePtr) (i32.const 4))))
+      (local.set $capacityPtr (i32.add (i32.const 4) (local.get $numElementsPtr)))
+
+      (i32.store (local.get $numElementsPtr) (i32.add (i32.load (local.get $numElementsPtr)) (i32.const 1)))
+
+
+      (call $maybeRehash (local.get $tablePtr))
+
+      (local.set $kvpPtr
+        (call $hashSearch
+          (local.get $tablePtr)
+          (local.get $keyPtr)
+        )
+      )
+
+      (memory.copy
+        (local.get $kvpPtr)
+        (local.get $keyPtr)
+        (i32.const 8)
+      )
+
+      (memory.copy
+        (i32.add (i32.const 8) (local.get $kvpPtr))
+        (local.get $valuePtr)
+        (i32.const 8)
+      )
+    )
+
+    (func $hashSearchArray (param $hashArrayBase i32) (param $hashSize i32) (param $keyPtr i32) (result i32)
+    (local $hashIndex i32) (local $kvpPtr i32)
+
+    (local.set $hashIndex (call $hashKey (local.get $keyPtr) (local.get $hashSize)))
+
+    ;; Do linear probing
+
+    (loop
+      (local.set $kvpPtr
+        (i32.add
+          (local.get $hashArrayBase)
+          (i32.mul (local.get $hashIndex) (i32.const 16))
+        )
+      )
+      ;; If the key is nil, can place there
+      (if
+        (i32.eq
+          (i32.load (local.get $kvpPtr))
+          (i32.const 0)
+        )
+        (then
+          (return (local.get $kvpPtr))
+        )
+      )
+      ;; If the key matches, we've found it
+      (if
+        (call $equals
+          (local.get $kvpPtr)
+          (local.get $keyPtr)
+        )
+        (then (return (local.get $kvpPtr)))
+      )
+      ;; Otherwise, increment
+      (local.set $hashIndex
+        (i32.rem_s
+          (i32.add
+            (local.get $hashIndex)
+            (i32.const 1)
+          )
+          (local.get $hashSize)
+        )
+      )
+      br 0
+    )
+
+    unreachable)
+    (func $hashSearch (param $tablePtr i32) (param $keyPtr i32) (result i32)
+    (local $hashArrayBase i32) (local $hashSize i32)
+
+    (local.set $hashArrayBase
+      (i32.load
+        (i32.add
+          (i32.const 8)
+          (i32.load
+            (i32.add (i32.const 4) (local.get $tablePtr))
+          )
+        )
+      )
+    )
+
+    (local.set $hashSize
+      (i32.load
+        (i32.add
+          (i32.const 4)
+          (i32.load
+            (i32.add
+              (i32.const 4)
+              (local.get $tablePtr)
+            )
+          )
+        )
+      )
+    )
+
+    (call $hashSearchArray (local.get $hashArrayBase) (local.get $hashSize) (local.get $keyPtr))
+    )
+    (func $hashKey (param $keyptr i32) (param $modulus i32) (result i32)
+      (local $stringLocation i32) (local $stringCharacters i32) (local $stringResult i32) (local $loopParam i32)
+      (local $curChar i32)
+      (i32.ne (i32.load (local.get $keyptr)) (i32.const 4))
+      (if (then (return
+        (i32.rem_s
+          (i32.load
+            (i32.add
+              (i32.const 4)
+              (local.get $keyptr)
+            )
+          )
+          (local.get $modulus)
+        )
+      )))
+      ;; Hashing string requires more complex approach
+
+      (local.set $stringLocation (i32.load (i32.add (i32.const 4) (local.get $keyptr))))
+
+      (local.set
+        $stringCharacters
+        (i32.load (local.get $stringLocation))
+      )
+      (local.set $loopParam (i32.const 0))
+      (local.set $stringResult (i32.const 0))
+      (loop
+        (local.set $curChar
+          (i32.load8_u
+            (i32.add
+              (local.get $stringLocation)
+              (i32.add (local.get $loopParam) (i32.const 4))
+            )
+          )
+        )
+
+        (local.set $stringResult
+          (i32.rem_s
+            (i32.add
+              (local.get $stringResult)
+              (i32.mul
+                (local.get $curChar)
+                (i32.const 257)
+              )
+            )
+            (local.get $modulus)
+          )
+        )
+
+        (local.set $loopParam
+          (i32.add
+            (local.get $loopParam)
+            (i32.const 1)
+          )
+        )
+        (br_if
+          0
+          (i32.lt_s
+            (local.get $loopParam)
+            (local.get $stringCharacters)
+          )
+        )
+      )
+      (local.get $stringResult)
+    )
+    (func $rehash (param $tablePtr i32)
+      (local $currentHashCapacity i32) (local $newHashArrayBytes i32) (local $loopParam i32)
+      (local $elementsInserted i32)
+      (local $hashTableBase i32)
+      (local $oldHashArrayPtr i32)
+      (local $kvpPtr i32)
+      (local $newHashCapacity i32) (local $newHashArrayPtr i32)
+
+      (local.set $hashTableBase
+        (i32.load (i32.add (i32.const 4) (local.get $tablePtr)))
+      )
+      (local.set $currentHashCapacity
+        (i32.load
+          (i32.add
+            (i32.const 4)
+            (local.get $hashTableBase)
+          )
+        )
+      )
+
+      (local.set $newHashCapacity
+        (call $nearestPrime
+          (i32.mul
+            (i32.const 2)
+            (local.get $currentHashCapacity)
+          )
+        )
+      )
+
+      (local.set $newHashArrayBytes (i32.mul (local.get $newHashCapacity) (i32.const 16)))
+
+      (call $alloc (local.get $newHashArrayBytes))
+      (local.set $newHashArrayPtr (i32.sub (global.get $HP) (local.get $newHashArrayBytes)))
+      (local.set $oldHashArrayPtr (i32.load (i32.add (local.get $hashTableBase) (i32.const 8))))
+
+      (local.set $elementsInserted (i32.const 0))
+      (local.set $loopParam (i32.const 0))
+      (loop
+        (local.set $kvpPtr (i32.add (local.get $oldHashArrayPtr) (i32.mul (i32.const 16) (local.get $loopParam))))
+        (if
+          ;; If the key isn't nil, and the value isn't nil, insert it
+          (i32.and
+            (i32.ne
+              (i32.load (local.get $kvpPtr))
+              (i32.const 0)
+            )
+            (i32.ne
+              (i32.load (i32.add (i32.const 8) (local.get $kvpPtr)))
+              (i32.const 0)
+            )
+          )
+          (then
+            (memory.copy
+              (call $hashSearchArray (local.get $newHashArrayPtr) (local.get $newHashCapacity) (local.get $kvpPtr))
+              (local.get $kvpPtr)
+              (i32.const 16)
+            )
+            (local.set $elementsInserted (i32.add (local.get $elementsInserted) (i32.const 1)))
+          )
+        )
+
+        (local.set $loopParam (i32.add (local.get $loopParam) (i32.const 1)))
+        (br_if 0 (i32.lt_s (local.get $loopParam) (local.get $currentHashCapacity)))
+      )
+
+      (i32.store (local.get $hashTableBase) (local.get $elementsInserted))
+      (i32.store (i32.add (i32.const 4) (local.get $hashTableBase)) (local.get $newHashCapacity))
+      (i32.store (i32.add (i32.const 8) (local.get $hashTableBase)) (local.get $newHashArrayPtr))
+    )
+    (func $maybeRehash (param $tablePtr i32)
+      (local $numElementsPtr i32)
+      (local $capacityPtr i32)
+
+      (local.set $numElementsPtr (i32.load (i32.add (local.get $tablePtr) (i32.const 4))))
+      (local.set $capacityPtr (i32.add (i32.const 4) (local.get $numElementsPtr)))
+
+      (if
+        (i32.gt_s
+          (i32.load (local.get $numElementsPtr))
+          (i32.div_s (i32.load (local.get $capacityPtr)) (i32.const 2))
+        )
+        (then
+          (call $rehash (local.get $tablePtr))
+        )
+      )
+    )
+    (func $alloc (param $bytes i32)
+      (call $gc (local.get $bytes))
+      (global.set $HP
+        (i32.add
+          (global.get $HP)
+          (local.get $bytes)
+        )
+      )
+    )
+    (table 6 funcref)
+    (elem (i32.const 0) $f0 $f1 $f2 $f3 $f4 $f5 )
+(func $f0 (export "main")
+ (i32.store (i32.const 0) (i32.const 5))
+ (i32.store (i32.const 12) (i32.const 2))
+ (i32.store (i32.const 20) (i32.const 1))
+ (i32.store (i32.const 28) (i32.const 1))
+ (i32.store (i32.const 36) (i32.const 1))
+ (i32.store (i32.const 44) (i32.const 1))
+ (i32.store (i32.const 52) (i32.const 1))
+ (i32.store (i32.const 60) (i32.const 1))
+ (i32.store (i32.const 68) (i32.const 4))
+ (i32.store (i32.const 80) (i32.const 4))
+ (i32.store (i32.const 92) (i32.const 3))
+ (i32.store (i32.const 100) (i32.const 5))
+ (i32.store (i32.const 112) (i32.const 1))
+ (i32.store (i32.const 120) (i32.const 1))
+ (i32.store (i32.const 128) (i32.const 1))
+ (i32.store (i32.const 136) (i32.const 3))
+ (i32.store (i32.const 144) (i32.const 5))
+ (i32.store (global.get $FP) (i32.const -1))
+ (i32.store (i32.add (i32.const 4) (global.get $FP)) (i32.const -1))
+ (i32.store (i32.add (i32.const 8) (global.get $FP)) (i32.const 29))
+ (global.set $HP (i32.add (global.get $HP) (i32.const 244)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 0)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 12))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store
+  (i32.load (i32.add (i32.const 4) (global.get $SP)))
+  (i32.add
+   (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+   (i32.const 1)
+   )
+  )
+ (call $maybeRehash (global.get $SP))
+ (memory.copy
+  (call $hashSearch
+   (global.get $SP)
+   (i32.sub (global.get $SP) (i32.const 8))
+   )
+  (i32.sub (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (global.get $SP)
+    (i32.sub (global.get $SP) (i32.const 8))
+    )
+   ))
+ (i32.store (global.get $SP) (i32.const 8))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.const 8))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 1))
+ (i32.sub (global.get $HP) (i32.const 4))
+ global.get $FP
+ i32.store
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 8)))
+ (i32.store (global.get $SP) (i32.const 5))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 12))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store
+  (i32.load (i32.add (i32.const 4) (global.get $SP)))
+  (i32.add
+   (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+   (i32.const 1)
+   )
+  )
+ (call $maybeRehash (global.get $SP))
+ (memory.copy
+  (call $hashSearch
+   (global.get $SP)
+   (i32.sub (global.get $SP) (i32.const 8))
+   )
+  (i32.sub (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (global.get $SP)
+    (i32.sub (global.get $SP) (i32.const 8))
+    )
+   ))
+ (i32.store (global.get $SP) (i32.const 8))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (call $alloc (i32.const 8))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 2))
+ (i32.sub (global.get $HP) (i32.const 4))
+ global.get $FP
+ i32.store
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 8)))
+ (i32.store (global.get $SP) (i32.const 5))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 20))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 4))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 5))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 6))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 7))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 8))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 9))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 10))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 11))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 12))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 13))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 14))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 15))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 16))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 17))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 18))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 19))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 20))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 168)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 160)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 152)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 4))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 144)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 5))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 136)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 6))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 128)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 7))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 120)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 8))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 112)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 9))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 104)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 10))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 96)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 11))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 88)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 12))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 80)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 13))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 72)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 14))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 64)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 15))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 56)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 16))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 48)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 17))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 40)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 18))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 32)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 19))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 24)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 20))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 176)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 16)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 160)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 28))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 20))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 36))
+  (i32.add
+   (i32.const 24)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 44))
+  (i32.add
+   (i32.const 16)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 52))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (i32.store (global.get $SP) (i32.const 8))
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 36)
+ i32.add
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 36)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 40)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 52)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 56)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.add (i32.const 20) (global.get $SP))
+ (i32.load (i32.add (global.get $SP) (i32.const 20)))
+ (i32.load (i32.add (global.get $SP) (i32.const 12)))
+ (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+ i32.sub
+ i32.store
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (block $whileLoop0 (loop
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 3))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (br_if 1 (i32.xor (i32.const 1) (i32.and
+      (i32.ne
+       (i32.load (global.get $SP))
+       (i32.const 0)
+       )
+      (i32.or
+       (i32.ne
+        (i32.load (global.get $SP))
+        (i32.const 3)
+        )
+       (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+       )
+      )
+     ))
+   (i32.store (global.get $SP) (i32.const 8))
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 36)
+   i32.add
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 36)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 40)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 52)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 56)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.add (i32.const 20) (global.get $SP))
+   (i32.load (i32.add (global.get $SP) (i32.const 20)))
+   (i32.load (i32.add (global.get $SP) (i32.const 12)))
+   (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+   i32.add
+   i32.store
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 20)
+      )
+     )
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   (block
+    (block
+     global.get $SP
+     global.get $FP
+     (i32.const 52)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 56)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+     (i32.store (global.get $SP) (i32.const 1))
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.ge_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     (br_if 0 (i32.xor (i32.const 1) (i32.and
+        (i32.ne
+         (i32.load
+          (i32.add
+           (global.get $SP)
+           (i32.const 8)
+           )
+          )
+         (i32.const 0)
+         )
+        (i32.or
+         (i32.ne
+          (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 8)
+            )
+           )
+          (i32.const 3)
+          )
+         (i32.ne (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 12)
+            )
+           ) (i32.const 0))
+         )
+        )
+       ))
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 36)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 40)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 44)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 48)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.gt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     )
+    (br_if 0 (i32.and
+      (i32.ne
+       (i32.load
+        (i32.add
+         (global.get $SP)
+         (i32.const 8)
+         )
+        )
+       (i32.const 0)
+       )
+      (i32.or
+       (i32.ne
+        (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 8)
+          )
+         )
+        (i32.const 3)
+        )
+       (i32.ne (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 12)
+          )
+         ) (i32.const 0))
+       )
+      )
+     )
+    (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+    (block
+     global.get $SP
+     global.get $FP
+     (i32.const 52)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 56)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+     (i32.store (global.get $SP) (i32.const 1))
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.lt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     (br_if 0 (i32.xor (i32.const 1) (i32.and
+        (i32.ne
+         (i32.load
+          (i32.add
+           (global.get $SP)
+           (i32.const 8)
+           )
+          )
+         (i32.const 0)
+         )
+        (i32.or
+         (i32.ne
+          (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 8)
+            )
+           )
+          (i32.const 3)
+          )
+         (i32.ne (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 12)
+            )
+           ) (i32.const 0))
+         )
+        )
+       ))
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 36)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 40)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 44)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 48)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.lt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     )
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (i32.and
+    (i32.ne
+     (i32.load (global.get $SP))
+     (i32.const 0)
+     )
+    (i32.or
+     (i32.ne
+      (i32.load (global.get $SP))
+      (i32.const 3)
+      )
+     (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+     )
+    )
+
+   (if (then
+     br $whileLoop0
+     ) (else
+     ))
+   global.get $SP
+   global.get $FP
+   (i32.const 36)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 40)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $FP) (i32.const 60))
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 12)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 16)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+   (i32.store (global.get $SP) (i32.const 4))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $SP) (i32.const 8))
+    (i32.add
+     (i32.const 8)
+     (call $hashSearch
+      (i32.add
+       (global.get $SP)
+       (i32.const 8)
+       )
+      (global.get $SP)
+      )
+     )
+    (i32.const 8)
+    )
+   global.get $SP
+   global.get $FP
+   (i32.const 28)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 32)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 60)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 64)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $SP) (i32.const 8))
+    (i32.add
+     (i32.const 8)
+     (call $hashSearch
+      (i32.add
+       (global.get $SP)
+       (i32.const 8)
+       )
+      (global.get $SP)
+      )
+     )
+    (i32.const 8)
+    )
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 1))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (call_indirect
+    (type $basicFunc)
+    (i32.load
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 28)
+       )
+      )
+     )
+    )
+   (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   br 0
+   ))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 0)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 20))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 3))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (call $hashInsert
+  (i32.add (i32.const 8) (global.get $SP))
+  (global.get $SP)
+  (i32.sub (global.get $SP) (i32.const 8))
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 28))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 20))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 24)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 16)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 68))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 28)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 32)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 68)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 72)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.const 8))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 4))
+ (i32.sub (global.get $HP) (i32.const 4))
+ global.get $FP
+ i32.store
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 8)))
+ (i32.store (global.get $SP) (i32.const 5))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 76))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 20))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 28))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 36))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 32)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 24)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 16)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 84))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store
+  (i32.load (i32.add (i32.const 4) (global.get $SP)))
+  (i32.add
+   (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+   (i32.const 1)
+   )
+  )
+ (call $maybeRehash (global.get $SP))
+ (memory.copy
+  (call $hashSearch
+   (global.get $SP)
+   (i32.sub (global.get $SP) (i32.const 8))
+   )
+  (i32.sub (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (global.get $SP)
+    (i32.sub (global.get $SP) (i32.const 8))
+    )
+   ))
+ (i32.store (global.get $SP) (i32.const 8))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 44))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store
+  (i32.load (i32.add (i32.const 4) (global.get $SP)))
+  (i32.add
+   (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+   (i32.const 1)
+   )
+  )
+ (call $maybeRehash (global.get $SP))
+ (memory.copy
+  (call $hashSearch
+   (global.get $SP)
+   (i32.sub (global.get $SP) (i32.const 8))
+   )
+  (i32.sub (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (global.get $SP)
+    (i32.sub (global.get $SP) (i32.const 8))
+    )
+   ))
+ (i32.store (global.get $SP) (i32.const 8))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 52))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store
+  (i32.load (i32.add (i32.const 4) (global.get $SP)))
+  (i32.add
+   (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+   (i32.const 1)
+   )
+  )
+ (call $maybeRehash (global.get $SP))
+ (memory.copy
+  (call $hashSearch
+   (global.get $SP)
+   (i32.sub (global.get $SP) (i32.const 8))
+   )
+  (i32.sub (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (global.get $SP)
+    (i32.sub (global.get $SP) (i32.const 8))
+    )
+   ))
+ (i32.store (global.get $SP) (i32.const 8))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 60))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 92))
+  (i32.add
+   (i32.const 24)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 100))
+  (i32.add
+   (i32.const 16)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 108))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (i32.store (global.get $SP) (i32.const 8))
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 92)
+ i32.add
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 92)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 96)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 108)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 112)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.add (i32.const 20) (global.get $SP))
+ (i32.load (i32.add (global.get $SP) (i32.const 20)))
+ (i32.load (i32.add (global.get $SP) (i32.const 12)))
+ (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+ i32.sub
+ i32.store
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (block $whileLoop1 (loop
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 3))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (br_if 1 (i32.xor (i32.const 1) (i32.and
+      (i32.ne
+       (i32.load (global.get $SP))
+       (i32.const 0)
+       )
+      (i32.or
+       (i32.ne
+        (i32.load (global.get $SP))
+        (i32.const 3)
+        )
+       (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+       )
+      )
+     ))
+   (i32.store (global.get $SP) (i32.const 8))
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 92)
+   i32.add
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 92)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 96)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 108)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 112)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.add (i32.const 20) (global.get $SP))
+   (i32.load (i32.add (global.get $SP) (i32.const 20)))
+   (i32.load (i32.add (global.get $SP) (i32.const 12)))
+   (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+   i32.add
+   i32.store
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 20)
+      )
+     )
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   (block
+    (block
+     global.get $SP
+     global.get $FP
+     (i32.const 108)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 112)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+     (i32.store (global.get $SP) (i32.const 1))
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.ge_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     (br_if 0 (i32.xor (i32.const 1) (i32.and
+        (i32.ne
+         (i32.load
+          (i32.add
+           (global.get $SP)
+           (i32.const 8)
+           )
+          )
+         (i32.const 0)
+         )
+        (i32.or
+         (i32.ne
+          (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 8)
+            )
+           )
+          (i32.const 3)
+          )
+         (i32.ne (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 12)
+            )
+           ) (i32.const 0))
+         )
+        )
+       ))
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 92)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 96)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 100)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 104)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.gt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     )
+    (br_if 0 (i32.and
+      (i32.ne
+       (i32.load
+        (i32.add
+         (global.get $SP)
+         (i32.const 8)
+         )
+        )
+       (i32.const 0)
+       )
+      (i32.or
+       (i32.ne
+        (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 8)
+          )
+         )
+        (i32.const 3)
+        )
+       (i32.ne (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 12)
+          )
+         ) (i32.const 0))
+       )
+      )
+     )
+    (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+    (block
+     global.get $SP
+     global.get $FP
+     (i32.const 108)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 112)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+     (i32.store (global.get $SP) (i32.const 1))
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.lt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     (br_if 0 (i32.xor (i32.const 1) (i32.and
+        (i32.ne
+         (i32.load
+          (i32.add
+           (global.get $SP)
+           (i32.const 8)
+           )
+          )
+         (i32.const 0)
+         )
+        (i32.or
+         (i32.ne
+          (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 8)
+            )
+           )
+          (i32.const 3)
+          )
+         (i32.ne (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 12)
+            )
+           ) (i32.const 0))
+         )
+        )
+       ))
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 92)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 96)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 100)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 104)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.lt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     )
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (i32.and
+    (i32.ne
+     (i32.load (global.get $SP))
+     (i32.const 0)
+     )
+    (i32.or
+     (i32.ne
+      (i32.load (global.get $SP))
+      (i32.const 3)
+      )
+     (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+     )
+    )
+
+   (if (then
+     br $whileLoop1
+     ) (else
+     ))
+   global.get $SP
+   global.get $FP
+   (i32.const 92)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 96)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $FP) (i32.const 116))
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 84)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 88)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 116)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 120)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $SP) (i32.const 8))
+    (i32.add
+     (i32.const 8)
+     (call $hashSearch
+      (i32.add
+       (global.get $SP)
+       (i32.const 8)
+       )
+      (global.get $SP)
+      )
+     )
+    (i32.const 8)
+    )
+   (memory.copy
+    (i32.add (global.get $FP) (i32.const 124))
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 12)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 16)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+   (i32.store (global.get $SP) (i32.const 4))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $SP) (i32.const 8))
+    (i32.add
+     (i32.const 8)
+     (call $hashSearch
+      (i32.add
+       (global.get $SP)
+       (i32.const 8)
+       )
+      (global.get $SP)
+      )
+     )
+    (i32.const 8)
+    )
+   global.get $SP
+   global.get $FP
+   (i32.const 124)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 128)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 1))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (call_indirect
+    (type $basicFunc)
+    (i32.load
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 28)
+       )
+      )
+     )
+    )
+   (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   br 0
+   ))
+ (call $alloc (i32.const 8))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 5))
+ (i32.sub (global.get $HP) (i32.const 4))
+ global.get $FP
+ i32.store
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 8)))
+ (i32.store (global.get $SP) (i32.const 5))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 76))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 3))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 68))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 76)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 80)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 20)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 32)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 24)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (loop
+  (i32.store (global.get $SP) (i32.const 1))
+  (i32.store
+   (i32.add (i32.const 4) (global.get $SP))
+   (i32.add
+    (i32.const 2)
+    (i32.load (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      ))
+    )
+   )
+  (call $hashInsert
+   (i32.add
+    (global.get $SP)
+    (i32.const 32)
+    )
+   (global.get $SP)
+   (i32.add
+    (i32.add
+     (i32.const 4)
+     (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      )
+     )
+    (i32.mul
+     (i32.const 8)
+     (i32.sub
+      (i32.load (i32.load
+        (i32.add (global.get $SP) (i32.const 12))
+        ))
+      (i32.const 1)
+      )
+     )
+    )
+   )
+  (i32.store (i32.load
+    (i32.add (global.get $SP) (i32.const 12))
+    )
+   (i32.sub
+    (i32.load (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      ))
+    (i32.const 1)
+    )
+   )
+  (br_if 0
+   (i32.ne
+    (i32.load (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      ))
+    (i32.const 0)
+    )
+   )
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 132))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 132)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 136)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 132)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 136)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 132)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 136)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 132)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 136)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 4))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 0)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 140))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 100))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 148))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 148)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 152)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store
+  (i32.add (global.get $SP) (i32.const 12))
+  (i32.sub (i32.const 0) (i32.load (i32.add (global.get $SP) (i32.const 12))))
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 156))
+  (i32.add
+   (i32.const 24)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 164))
+  (i32.add
+   (i32.const 16)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 172))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (i32.store (global.get $SP) (i32.const 8))
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 156)
+ i32.add
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 156)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 160)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 172)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 176)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.add (i32.const 20) (global.get $SP))
+ (i32.load (i32.add (global.get $SP) (i32.const 20)))
+ (i32.load (i32.add (global.get $SP) (i32.const 12)))
+ (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+ i32.sub
+ i32.store
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (block $whileLoop2 (loop
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 3))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (br_if 1 (i32.xor (i32.const 1) (i32.and
+      (i32.ne
+       (i32.load (global.get $SP))
+       (i32.const 0)
+       )
+      (i32.or
+       (i32.ne
+        (i32.load (global.get $SP))
+        (i32.const 3)
+        )
+       (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+       )
+      )
+     ))
+   (i32.store (global.get $SP) (i32.const 8))
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 156)
+   i32.add
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 156)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 160)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 172)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 176)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.add (i32.const 20) (global.get $SP))
+   (i32.load (i32.add (global.get $SP) (i32.const 20)))
+   (i32.load (i32.add (global.get $SP) (i32.const 12)))
+   (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+   i32.add
+   i32.store
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 20)
+      )
+     )
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   (block
+    (block
+     global.get $SP
+     global.get $FP
+     (i32.const 172)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 176)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+     (i32.store (global.get $SP) (i32.const 1))
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.ge_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     (br_if 0 (i32.xor (i32.const 1) (i32.and
+        (i32.ne
+         (i32.load
+          (i32.add
+           (global.get $SP)
+           (i32.const 8)
+           )
+          )
+         (i32.const 0)
+         )
+        (i32.or
+         (i32.ne
+          (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 8)
+            )
+           )
+          (i32.const 3)
+          )
+         (i32.ne (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 12)
+            )
+           ) (i32.const 0))
+         )
+        )
+       ))
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 156)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 160)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 164)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 168)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.gt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     )
+    (br_if 0 (i32.and
+      (i32.ne
+       (i32.load
+        (i32.add
+         (global.get $SP)
+         (i32.const 8)
+         )
+        )
+       (i32.const 0)
+       )
+      (i32.or
+       (i32.ne
+        (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 8)
+          )
+         )
+        (i32.const 3)
+        )
+       (i32.ne (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 12)
+          )
+         ) (i32.const 0))
+       )
+      )
+     )
+    (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+    (block
+     global.get $SP
+     global.get $FP
+     (i32.const 172)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 176)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+     (i32.store (global.get $SP) (i32.const 1))
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.lt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     (br_if 0 (i32.xor (i32.const 1) (i32.and
+        (i32.ne
+         (i32.load
+          (i32.add
+           (global.get $SP)
+           (i32.const 8)
+           )
+          )
+         (i32.const 0)
+         )
+        (i32.or
+         (i32.ne
+          (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 8)
+            )
+           )
+          (i32.const 3)
+          )
+         (i32.ne (i32.load
+           (i32.add
+            (global.get $SP)
+            (i32.const 12)
+            )
+           ) (i32.const 0))
+         )
+        )
+       ))
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 156)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 160)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     global.get $SP
+     global.get $FP
+     (i32.const 164)
+     i32.add
+     i32.load
+     i32.store
+     (i32.add (global.get $SP) (i32.const 4))
+     global.get $FP
+     (i32.const 168)
+     i32.add
+     i32.load
+     i32.store
+     (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+     (i32.add (i32.const 20) (global.get $SP))
+     (i32.load (i32.add (global.get $SP) (i32.const 20)))
+     (i32.load (i32.add (global.get $SP) (i32.const 12)))
+     (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 3))
+     i32.lt_s
+     i32.store
+     (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+     )
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (i32.and
+    (i32.ne
+     (i32.load (global.get $SP))
+     (i32.const 0)
+     )
+    (i32.or
+     (i32.ne
+      (i32.load (global.get $SP))
+      (i32.const 3)
+      )
+     (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+     )
+    )
+
+   (if (then
+     br $whileLoop2
+     ) (else
+     ))
+   global.get $SP
+   global.get $FP
+   (i32.const 156)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 160)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $FP) (i32.const 180))
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 140)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 144)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 180)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 184)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   (i32.store
+    (i32.load (i32.add (i32.const 4) (global.get $SP)))
+    (i32.add
+     (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+     (i32.const 1)
+     )
+    )
+   (call $maybeRehash (global.get $SP))
+   (memory.copy
+    (call $hashSearch
+     (global.get $SP)
+     (i32.sub (global.get $SP) (i32.const 8))
+     )
+    (i32.sub (global.get $SP) (i32.const 8))
+    (i32.const 8)
+    )
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+     (i32.const 8)
+     (call $hashSearch
+      (global.get $SP)
+      (i32.sub (global.get $SP) (i32.const 8))
+      )
+     ))
+   (i32.store (global.get $SP) (i32.const 8))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 148)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 152)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 180)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 184)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.add (i32.const 20) (global.get $SP))
+   (i32.load (i32.add (global.get $SP) (i32.const 20)))
+   (i32.load (i32.add (global.get $SP) (i32.const 12)))
+   (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+   i32.sub
+   i32.store
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 20)
+      )
+     )
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   br 0
+   ))
+ global.get $SP
+ global.get $FP
+ (i32.const 20)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 24)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 140)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 144)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (i32.gt_s (i32.load (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 12)
+     )
+    )) (i32.const 0))
+ (if
+  (then
+   (memory.copy
+    (i32.add (global.get $FP) (i32.const 188))
+    (i32.add
+     (i32.const 4)
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 12)
+       )
+      )
+     )
+    (i32.const 8)
+    )
+   (i32.store
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 12)
+      )
+     )
+    (i32.sub
+     (i32.load (i32.load
+       (i32.add
+        (global.get $SP)
+        (i32.const 12)
+        )
+       ))
+     (i32.const 1)
+     )
+    )
+   )
+  (else
+   (memory.fill
+    (i32.add (global.get $FP) (i32.const 188))
+    (i32.const 0)
+    (i32.const 8)
+    )
+   )
+  )
+ (i32.gt_s (i32.load (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 12)
+     )
+    )) (i32.const 0))
+ (if
+  (then
+   (memory.copy
+    (i32.add (global.get $FP) (i32.const 196))
+    (i32.add
+     (i32.const 12)
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 12)
+       )
+      )
+     )
+    (i32.const 8)
+    )
+   (i32.store
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 12)
+      )
+     )
+    (i32.sub
+     (i32.load (i32.load
+       (i32.add
+        (global.get $SP)
+        (i32.const 12)
+        )
+       ))
+     (i32.const 1)
+     )
+    )
+   )
+  (else
+   (memory.fill
+    (i32.add (global.get $FP) (i32.const 196))
+    (i32.const 0)
+    (i32.const 8)
+    )
+   )
+  )
+ (i32.gt_s (i32.load (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 12)
+     )
+    )) (i32.const 0))
+ (if
+  (then
+   (memory.copy
+    (i32.add (global.get $FP) (i32.const 204))
+    (i32.add
+     (i32.const 20)
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 12)
+       )
+      )
+     )
+    (i32.const 8)
+    )
+   (i32.store
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 12)
+      )
+     )
+    (i32.sub
+     (i32.load (i32.load
+       (i32.add
+        (global.get $SP)
+        (i32.const 12)
+        )
+       ))
+     (i32.const 1)
+     )
+    )
+   )
+  (else
+   (memory.fill
+    (i32.add (global.get $FP) (i32.const 204))
+    (i32.const 0)
+    (i32.const 8)
+    )
+   )
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (block $whileLoop3 (loop
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 3))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (br_if 1 (i32.xor (i32.const 1) (i32.and
+      (i32.ne
+       (i32.load (global.get $SP))
+       (i32.const 0)
+       )
+      (i32.or
+       (i32.ne
+        (i32.load (global.get $SP))
+        (i32.const 3)
+        )
+       (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+       )
+      )
+     ))
+   global.get $SP
+   global.get $FP
+   (i32.const 188)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 192)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 196)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 200)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 204)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 208)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+   (i32.store (global.get $SP) (i32.const 1))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (call_indirect
+    (type $basicFunc)
+    (i32.load
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 36)
+       )
+      )
+     )
+    )
+   (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+   (i32.gt_s (i32.load (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 12)
+       )
+      )) (i32.const 0))
+   (if
+    (then
+     (memory.copy
+      (i32.add (global.get $FP) (i32.const 212))
+      (i32.add
+       (i32.const 4)
+       (i32.load
+        (i32.add
+         (global.get $SP)
+         (i32.const 12)
+         )
+        )
+       )
+      (i32.const 8)
+      )
+     (i32.store
+      (i32.load
+       (i32.add
+        (global.get $SP)
+        (i32.const 12)
+        )
+       )
+      (i32.sub
+       (i32.load (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 12)
+          )
+         ))
+       (i32.const 1)
+       )
+      )
+     )
+    (else
+     (memory.fill
+      (i32.add (global.get $FP) (i32.const 212))
+      (i32.const 0)
+      (i32.const 8)
+      )
+     )
+    )
+   (i32.gt_s (i32.load (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 12)
+       )
+      )) (i32.const 0))
+   (if
+    (then
+     (memory.copy
+      (i32.add (global.get $FP) (i32.const 220))
+      (i32.add
+       (i32.const 12)
+       (i32.load
+        (i32.add
+         (global.get $SP)
+         (i32.const 12)
+         )
+        )
+       )
+      (i32.const 8)
+      )
+     (i32.store
+      (i32.load
+       (i32.add
+        (global.get $SP)
+        (i32.const 12)
+        )
+       )
+      (i32.sub
+       (i32.load (i32.load
+         (i32.add
+          (global.get $SP)
+          (i32.const 12)
+          )
+         ))
+       (i32.const 1)
+       )
+      )
+     )
+    (else
+     (memory.fill
+      (i32.add (global.get $FP) (i32.const 220))
+      (i32.const 0)
+      (i32.const 8)
+      )
+     )
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 212)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 216)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+   (i32.store (global.get $SP) (i32.const 0))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (call $equals (global.get $SP) (i32.sub (global.get $SP) (i32.const 8))))
+   (i32.store (global.get $SP) (i32.const 3))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (i32.and
+    (i32.ne
+     (i32.load (global.get $SP))
+     (i32.const 0)
+     )
+    (i32.or
+     (i32.ne
+      (i32.load (global.get $SP))
+      (i32.const 3)
+      )
+     (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+     )
+    )
+
+   (if (then
+     br $whileLoop3
+     ) (else
+     ))
+   (i32.store (global.get $SP) (i32.const 8))
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 204)
+   i32.add
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 212)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 216)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.const 20)
+      )
+     )
+    (i32.add
+     (i32.const 8)
+     (global.get $SP)
+     )
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   global.get $SP
+   global.get $FP
+   (i32.const 12)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 16)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+   (i32.store (global.get $SP) (i32.const 4))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $SP) (i32.const 8))
+    (i32.add
+     (i32.const 8)
+     (call $hashSearch
+      (i32.add
+       (global.get $SP)
+       (i32.const 8)
+       )
+      (global.get $SP)
+      )
+     )
+    (i32.const 8)
+    )
+   global.get $SP
+   global.get $FP
+   (i32.const 212)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 216)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 1))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (call_indirect
+    (type $basicFunc)
+    (i32.load
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 28)
+       )
+      )
+     )
+    )
+   (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 12)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 16)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+   (i32.store (global.get $SP) (i32.const 4))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   (memory.copy
+    (i32.add (global.get $SP) (i32.const 8))
+    (i32.add
+     (i32.const 8)
+     (call $hashSearch
+      (i32.add
+       (global.get $SP)
+       (i32.const 8)
+       )
+      (global.get $SP)
+      )
+     )
+    (i32.const 8)
+    )
+   global.get $SP
+   global.get $FP
+   (i32.const 220)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 224)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+   (i32.store (global.get $SP) (i32.const 1))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (call_indirect
+    (type $basicFunc)
+    (i32.load
+     (i32.load
+      (i32.add
+       (global.get $SP)
+       (i32.const 28)
+       )
+      )
+     )
+    )
+   (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+   (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+   br 0
+   ))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 76)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 80)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 20)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 4)
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 12)
+     )
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 5))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 32)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 24)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 32)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 16)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 228))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 228)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 232)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 228)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 232)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 228)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 232)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 0)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 84))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store
+  (i32.load (i32.add (i32.const 4) (global.get $SP)))
+  (i32.add
+   (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+   (i32.const 1)
+   )
+  )
+ (call $maybeRehash (global.get $SP))
+ (memory.copy
+  (call $hashSearch
+   (global.get $SP)
+   (i32.sub (global.get $SP) (i32.const 8))
+   )
+  (i32.sub (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (global.get $SP)
+    (i32.sub (global.get $SP) (i32.const 8))
+    )
+   ))
+ (i32.store (global.get $SP) (i32.const 8))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 5))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 84)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 88)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 0)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 92))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 100))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (call $hashInsert
+  (i32.add (i32.const 8) (global.get $SP))
+  (global.get $SP)
+  (i32.sub (global.get $SP) (i32.const 8))
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 68))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 68)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 72)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 92))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 68)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 72)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 92))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 112))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 120))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 128))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 32)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 24)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 16)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 132))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 76)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 80)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 20)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 32)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $hashInsert (i32.add (global.get $SP) (i32.const 40)) (i32.add (global.get $SP) (i32.const 8)) (i32.add (global.get $SP) (i32.const 24)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (loop
+  (i32.store (global.get $SP) (i32.const 1))
+  (i32.store
+   (i32.add (i32.const 4) (global.get $SP))
+   (i32.add
+    (i32.const 2)
+    (i32.load (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      ))
+    )
+   )
+  (call $hashInsert
+   (i32.add
+    (global.get $SP)
+    (i32.const 32)
+    )
+   (global.get $SP)
+   (i32.add
+    (i32.add
+     (i32.const 4)
+     (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      )
+     )
+    (i32.mul
+     (i32.const 8)
+     (i32.sub
+      (i32.load (i32.load
+        (i32.add (global.get $SP) (i32.const 12))
+        ))
+      (i32.const 1)
+      )
+     )
+    )
+   )
+  (i32.store (i32.load
+    (i32.add (global.get $SP) (i32.const 12))
+    )
+   (i32.sub
+    (i32.load (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      ))
+    (i32.const 1)
+    )
+   )
+  (br_if 0
+   (i32.ne
+    (i32.load (i32.load
+      (i32.add (global.get $SP) (i32.const 12))
+      ))
+    (i32.const 0)
+    )
+   )
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 228))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 0)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.add (i32.const 12) (i32.const 176)))
+ (i32.store (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.const 11))
+ (i32.store (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176)))) (i32.sub (global.get $HP) (i32.const 176)))
+ (memory.fill
+  (i32.sub (global.get $HP) (i32.const 176))
+  (i32.const 0)
+  (i32.const 176)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.add (i32.const 12) (i32.const 176))))
+ (i32.store (global.get $SP) (i32.const 6))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 0)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (call $hashInsert
+  (i32.add (i32.const 8) (global.get $SP))
+  (global.get $SP)
+  (i32.sub (global.get $SP) (i32.const 8))
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 236))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 236)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 240)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 136))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store
+  (i32.load (i32.add (i32.const 4) (global.get $SP)))
+  (i32.add
+   (i32.load (i32.load (i32.add (i32.const 4) (global.get $SP))))
+   (i32.const 1)
+   )
+  )
+ (call $maybeRehash (global.get $SP))
+ (memory.copy
+  (call $hashSearch
+   (global.get $SP)
+   (i32.sub (global.get $SP) (i32.const 8))
+   )
+  (i32.sub (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (global.get $SP)
+    (i32.sub (global.get $SP) (i32.const 8))
+    )
+   ))
+ (i32.store (global.get $SP) (i32.const 8))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 144))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 236)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 240)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 136))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 236)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 240)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 136))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 236)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 240)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 136))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ global.get $SP
+ global.get $FP
+ (i32.const 236)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 240)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 80))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 136))
+ (i32.store (global.get $SP) (i32.const 4))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call_indirect
+  (type $basicFunc)
+  (i32.load
+   (i32.load
+    (i32.add
+     (global.get $SP)
+     (i32.const 28)
+     )
+    )
+   )
+  )
+ (global.set $FP (i32.load (i32.add (global.get $FP) (i32.const 4))))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.const 1))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 0))
+ (i32.store (i32.sub (global.get $HP) (i32.const 4)) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 12)))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ )
+
+
+(func $f1
+ (call $alloc (i32.const 20))
+ (i32.store (i32.sub (global.get $HP) (i32.const 20)) (i32.load (i32.add (i32.const 4) (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul
+        (i32.const 8)
+        (i32.load (i32.add (i32.const 12) (global.get $SP)))
+        )
+       (i32.const 20)
+       )
+      )
+     ))))
+ (i32.store
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 20)))
+  (global.get $FP)
+  )
+ (i32.store
+  (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.const 20)))
+  (i32.const 1)
+  )
+ (global.set $FP (i32.sub (global.get $HP) (i32.const 20)))
+ (i32.lt_s (i32.const 0) (i32.sub (i32.load (i32.add (i32.const 12) (global.get $SP))) (i32.const 1)))
+ (if (then
+   (memory.copy
+    (i32.add
+     (global.get $FP)
+     (i32.const 12)
+     )
+    (i32.sub (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+       (i32.const 8)
+       )
+      ) (i32.const 0))
+    (i32.const 8)
+    )
+   ) (else
+   (i32.eq (i32.load (i32.add (global.get $SP) (i32.const 16))) (i32.const 7))
+   (if (then
+     (i32.gt_s (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))) (i32.const 0))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.add
+         (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+         (i32.add
+          (i32.mul
+           (i32.sub
+            (i32.const 1)
+            (i32.load (i32.add (i32.const 12) (global.get $SP)))
+            )
+           (i32.const 8)
+           )
+          (i32.const 4)
+          )
+         )
+        (i32.const 8)
+        )
+       (i32.store
+        (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+        (i32.sub
+         (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4))))
+         (i32.const 1)
+         )
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ) (else
+     (i32.eq (i32.const 1) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.sub (i32.add
+          (global.get $SP)
+          (i32.add
+           (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+           (i32.const 8)
+           )
+          ) (i32.const 0))
+        (i32.const 8)
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ))
+   ))
+ (global.set $SP
+  (i32.add
+   (global.get $SP)
+   (i32.add
+    (i32.const 16)
+    (i32.mul
+     (i32.const 8)
+     (i32.load (i32.add (i32.const 12) (global.get $SP)))
+     )
+    )
+   )
+  )
+
+ (call $print (i32.add (global.get $FP) (i32.const 12)))
+
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.const 1))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 0))
+ (i32.store (i32.sub (global.get $HP) (i32.const 4)) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 12)))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ )
+
+
+(func $f2
+ (call $alloc (i32.const 28))
+ (i32.store (i32.sub (global.get $HP) (i32.const 28)) (i32.load (i32.add (i32.const 4) (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul
+        (i32.const 8)
+        (i32.load (i32.add (i32.const 12) (global.get $SP)))
+        )
+       (i32.const 20)
+       )
+      )
+     ))))
+ (i32.store
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 28)))
+  (global.get $FP)
+  )
+ (i32.store
+  (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.const 28)))
+  (i32.const 2)
+  )
+ (global.set $FP (i32.sub (global.get $HP) (i32.const 28)))
+ (i32.lt_s (i32.const 0) (i32.sub (i32.load (i32.add (i32.const 12) (global.get $SP))) (i32.const 1)))
+ (if (then
+   (memory.copy
+    (i32.add
+     (global.get $FP)
+     (i32.const 12)
+     )
+    (i32.sub (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+       (i32.const 8)
+       )
+      ) (i32.const 0))
+    (i32.const 8)
+    )
+   ) (else
+   (i32.eq (i32.load (i32.add (global.get $SP) (i32.const 16))) (i32.const 7))
+   (if (then
+     (i32.gt_s (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))) (i32.const 0))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.add
+         (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+         (i32.add
+          (i32.mul
+           (i32.sub
+            (i32.const 1)
+            (i32.load (i32.add (i32.const 12) (global.get $SP)))
+            )
+           (i32.const 8)
+           )
+          (i32.const 4)
+          )
+         )
+        (i32.const 8)
+        )
+       (i32.store
+        (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+        (i32.sub
+         (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4))))
+         (i32.const 1)
+         )
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ) (else
+     (i32.eq (i32.const 1) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.sub (i32.add
+          (global.get $SP)
+          (i32.add
+           (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+           (i32.const 8)
+           )
+          ) (i32.const 0))
+        (i32.const 8)
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ))
+   ))
+ (global.set $SP
+  (i32.add
+   (global.get $SP)
+   (i32.add
+    (i32.const 16)
+    (i32.mul
+     (i32.const 8)
+     (i32.load (i32.add (i32.const 12) (global.get $SP)))
+     )
+    )
+   )
+  )
+ (call $alloc (i32.const 8))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 3))
+ (i32.sub (global.get $HP) (i32.const 4))
+ global.get $FP
+ i32.store
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 8)))
+ (i32.store (global.get $SP) (i32.const 5))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 20))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 20)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 24)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 0))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.const 28))
+ (global.set $temp (i32.sub (global.get $HP) (i32.const 28)))
+ (i32.store (i32.sub (global.get $HP) (i32.const 28)) (i32.const 3))
+ (memory.copy
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 28)))
+  (i32.add (global.get $SP) (i32.const 24))
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (i32.const 12) (i32.sub (global.get $HP) (i32.const 28)))
+  (i32.add (global.get $SP) (i32.const 16))
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (i32.const 20) (i32.sub (global.get $HP) (i32.const 28)))
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 24)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (global.get $temp))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ return
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.const 1))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 0))
+ (i32.store (i32.sub (global.get $HP) (i32.const 4)) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 12)))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ )
+
+
+(func $f3
+ (call $alloc (i32.const 36))
+ (i32.store (i32.sub (global.get $HP) (i32.const 36)) (i32.load (i32.add (i32.const 4) (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul
+        (i32.const 8)
+        (i32.load (i32.add (i32.const 12) (global.get $SP)))
+        )
+       (i32.const 20)
+       )
+      )
+     ))))
+ (i32.store
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 36)))
+  (global.get $FP)
+  )
+ (i32.store
+  (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.const 36)))
+  (i32.const 3)
+  )
+ (global.set $FP (i32.sub (global.get $HP) (i32.const 36)))
+ (i32.lt_s (i32.const 0) (i32.sub (i32.load (i32.add (i32.const 12) (global.get $SP))) (i32.const 1)))
+ (if (then
+   (memory.copy
+    (i32.add
+     (global.get $FP)
+     (i32.const 12)
+     )
+    (i32.sub (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+       (i32.const 8)
+       )
+      ) (i32.const 0))
+    (i32.const 8)
+    )
+   ) (else
+   (i32.eq (i32.load (i32.add (global.get $SP) (i32.const 16))) (i32.const 7))
+   (if (then
+     (i32.gt_s (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))) (i32.const 0))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.add
+         (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+         (i32.add
+          (i32.mul
+           (i32.sub
+            (i32.const 1)
+            (i32.load (i32.add (i32.const 12) (global.get $SP)))
+            )
+           (i32.const 8)
+           )
+          (i32.const 4)
+          )
+         )
+        (i32.const 8)
+        )
+       (i32.store
+        (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+        (i32.sub
+         (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4))))
+         (i32.const 1)
+         )
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ) (else
+     (i32.eq (i32.const 1) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.sub (i32.add
+          (global.get $SP)
+          (i32.add
+           (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+           (i32.const 8)
+           )
+          ) (i32.const 0))
+        (i32.const 8)
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 12)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ))
+   ))
+ (i32.lt_s (i32.const 1) (i32.sub (i32.load (i32.add (i32.const 12) (global.get $SP))) (i32.const 1)))
+ (if (then
+   (memory.copy
+    (i32.add
+     (global.get $FP)
+     (i32.const 20)
+     )
+    (i32.sub (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+       (i32.const 8)
+       )
+      ) (i32.const 8))
+    (i32.const 8)
+    )
+   ) (else
+   (i32.eq (i32.load (i32.add (global.get $SP) (i32.const 16))) (i32.const 7))
+   (if (then
+     (i32.gt_s (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))) (i32.const 0))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 20)
+         )
+        (i32.add
+         (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+         (i32.add
+          (i32.mul
+           (i32.sub
+            (i32.const 2)
+            (i32.load (i32.add (i32.const 12) (global.get $SP)))
+            )
+           (i32.const 8)
+           )
+          (i32.const 4)
+          )
+         )
+        (i32.const 8)
+        )
+       (i32.store
+        (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4)))
+        (i32.sub
+         (i32.load (i32.load (i32.add (i32.add (global.get $SP) (i32.const 16)) (i32.const 4))))
+         (i32.const 1)
+         )
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 20)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ) (else
+     (i32.eq (i32.const 2) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+     (if (then
+       (memory.copy
+        (i32.add
+         (global.get $FP)
+         (i32.const 20)
+         )
+        (i32.sub (i32.add
+          (global.get $SP)
+          (i32.add
+           (i32.mul (i32.const 8) (i32.load (i32.add (i32.const 12) (global.get $SP))))
+           (i32.const 8)
+           )
+          ) (i32.const 8))
+        (i32.const 8)
+        )
+       ) (else
+       (memory.fill
+        (i32.add
+         (global.get $FP)
+         (i32.const 20)
+         )
+        (i32.const 0)
+        (i32.const 8)
+        )
+       ))
+     ))
+   ))
+ (global.set $SP
+  (i32.add
+   (global.get $SP)
+   (i32.add
+    (i32.const 16)
+    (i32.mul
+     (i32.const 8)
+     (i32.load (i32.add (i32.const 12) (global.get $SP)))
+     )
+    )
+   )
+  )
+ (i32.store (global.get $SP) (i32.const 8))
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 20)
+ i32.add
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 20)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 24)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.add (i32.const 20) (global.get $SP))
+ (i32.load (i32.add (global.get $SP) (i32.const 20)))
+ (i32.load (i32.add (global.get $SP) (i32.const 12)))
+ (i32.store (i32.add (i32.const 16) (global.get $SP)) (i32.const 1))
+ i32.add
+ i32.store
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.load
+   (i32.add
+    (global.get $SP)
+    (i32.const 20)
+    )
+   )
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ global.get $SP
+ global.get $FP
+ (i32.const 12)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 16)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 20)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 24)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (memory.copy
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.add
+   (i32.const 8)
+   (call $hashSearch
+    (i32.add
+     (global.get $SP)
+     (i32.const 8)
+     )
+    (global.get $SP)
+    )
+   )
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (global.get $FP) (i32.const 28))
+  (i32.add
+   (i32.const 8)
+   (global.get $SP)
+   )
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ global.get $SP
+ global.get $FP
+ (i32.const 28)
+ i32.add
+ i32.load
+ i32.store
+ (i32.add (global.get $SP) (i32.const 4))
+ global.get $FP
+ (i32.const 32)
+ i32.add
+ i32.load
+ i32.store
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (global.set $SP (i32.add (global.get $SP) (i32.const 8)))
+ (i32.and
+  (i32.ne
+   (i32.load (global.get $SP))
+   (i32.const 0)
+   )
+  (i32.or
+   (i32.ne
+    (i32.load (global.get $SP))
+    (i32.const 3)
+    )
+   (i32.ne (i32.load (i32.add (global.get $SP) (i32.const 4))) (i32.const 0))
+   )
+  )
+
+ (if (then
+   global.get $SP
+   global.get $FP
+   (i32.const 20)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 24)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   global.get $SP
+   global.get $FP
+   (i32.const 28)
+   i32.add
+   i32.load
+   i32.store
+   (i32.add (global.get $SP) (i32.const 4))
+   global.get $FP
+   (i32.const 32)
+   i32.add
+   i32.load
+   i32.store
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   (call $alloc (i32.const 20))
+   (global.set $temp (i32.sub (global.get $HP) (i32.const 20)))
+   (i32.store (i32.sub (global.get $HP) (i32.const 20)) (i32.const 2))
+   (memory.copy
+    (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 20)))
+    (i32.add (global.get $SP) (i32.const 16))
+    (i32.const 8)
+    )
+   (memory.copy
+    (i32.add (i32.const 12) (i32.sub (global.get $HP) (i32.const 20)))
+    (i32.add (global.get $SP) (i32.const 8))
+    (i32.const 8)
+    )
+   (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+   (i32.store (i32.add (i32.const 4) (global.get $SP)) (global.get $temp))
+   (i32.store (global.get $SP) (i32.const 7))
+   (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+   return
+   ) (else
+   ))
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.const 1))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 0))
+ (i32.store (i32.sub (global.get $HP) (i32.const 4)) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 12)))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ )
+
+
+(func $f4
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.load (i32.add (i32.const 4) (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul
+        (i32.const 8)
+        (i32.load (i32.add (i32.const 12) (global.get $SP)))
+        )
+       (i32.const 20)
+       )
+      )
+     ))))
+ (i32.store
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 12)))
+  (global.get $FP)
+  )
+ (i32.store
+  (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.const 12)))
+  (i32.const 0)
+  )
+ (global.set $FP (i32.sub (global.get $HP) (i32.const 12)))
+ (global.set $SP
+  (i32.add
+   (global.get $SP)
+   (i32.add
+    (i32.const 16)
+    (i32.mul
+     (i32.const 8)
+     (i32.load (i32.add (i32.const 12) (global.get $SP)))
+     )
+    )
+   )
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 1))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 2))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.const 20))
+ (global.set $temp (i32.sub (global.get $HP) (i32.const 20)))
+ (i32.store (i32.sub (global.get $HP) (i32.const 20)) (i32.const 2))
+ (memory.copy
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 20)))
+  (i32.add (global.get $SP) (i32.const 16))
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (i32.const 12) (i32.sub (global.get $HP) (i32.const 20)))
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (global.get $temp))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ return
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.const 1))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 0))
+ (i32.store (i32.sub (global.get $HP) (i32.const 4)) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 12)))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ )
+
+
+(func $f5
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.load (i32.add (i32.const 4) (i32.load
+     (i32.add
+      (global.get $SP)
+      (i32.add
+       (i32.mul
+        (i32.const 8)
+        (i32.load (i32.add (i32.const 12) (global.get $SP)))
+        )
+       (i32.const 20)
+       )
+      )
+     ))))
+ (i32.store
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 12)))
+  (global.get $FP)
+  )
+ (i32.store
+  (i32.add (i32.const 8) (i32.sub (global.get $HP) (i32.const 12)))
+  (i32.const 0)
+  )
+ (global.set $FP (i32.sub (global.get $HP) (i32.const 12)))
+ (global.set $SP
+  (i32.add
+   (global.get $SP)
+   (i32.add
+    (i32.const 16)
+    (i32.mul
+     (i32.const 8)
+     (i32.load (i32.add (i32.const 12) (global.get $SP)))
+     )
+    )
+   )
+  )
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 3))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.const 4))
+ (i32.store (global.get $SP) (i32.const 1))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ (call $alloc (i32.const 20))
+ (global.set $temp (i32.sub (global.get $HP) (i32.const 20)))
+ (i32.store (i32.sub (global.get $HP) (i32.const 20)) (i32.const 2))
+ (memory.copy
+  (i32.add (i32.const 4) (i32.sub (global.get $HP) (i32.const 20)))
+  (i32.add (global.get $SP) (i32.const 16))
+  (i32.const 8)
+  )
+ (memory.copy
+  (i32.add (i32.const 12) (i32.sub (global.get $HP) (i32.const 20)))
+  (i32.add (global.get $SP) (i32.const 8))
+  (i32.const 8)
+  )
+ (global.set $SP (i32.add (global.get $SP) (i32.const 16)))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (global.get $temp))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ return
+ (call $alloc (i32.const 12))
+ (i32.store (i32.sub (global.get $HP) (i32.const 12)) (i32.const 1))
+ (i32.store (i32.sub (global.get $HP) (i32.const 8)) (i32.const 0))
+ (i32.store (i32.sub (global.get $HP) (i32.const 4)) (i32.const 0))
+ (i32.store (i32.add (i32.const 4) (global.get $SP)) (i32.sub (global.get $HP) (i32.const 12)))
+ (i32.store (global.get $SP) (i32.const 7))
+ (global.set $SP (i32.sub (global.get $SP) (i32.const 8)))
+ )
+
+)
