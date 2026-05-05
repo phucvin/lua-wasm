@@ -5,7 +5,7 @@ import Function from "./ast/Function.js";
 import LocalAssignment from "./ast/LocalAssignment.js";
 import Variable from "./ast/Variable.js";
 import AstVisitor from "./AstVisitor.js";
-import StringNode from "./Ast/StringNode.js";
+import StringNode from "./ast/StringNode.js";
 import FieldAccess from "./ast/FieldAccess.js";
 
 // Collect information about variables

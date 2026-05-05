@@ -27,6 +27,5 @@ for testFile in testPrograms/*.lua; do
 done
 
 rm testPrograms/*.wasm > /dev/null 2> /dev/null
-rm testPrograms/*.wat > /dev/null 2> /dev/null
 rm testPrograms/*.expected > /dev/null 2> /dev/null
 rm testPrograms/*.actual > /dev/null 2> /dev/null
